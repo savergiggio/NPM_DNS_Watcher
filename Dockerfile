@@ -3,9 +3,10 @@ FROM python:3.11-alpine
 # Set working directory
 WORKDIR /app
 
-# Install required packages
+# Install required packages including Docker CLI
 RUN apk add --no-cache \
     tzdata \
+    docker-cli \
     && rm -rf /var/cache/apk/*
 
 # Create necessary directories with proper permissions
@@ -16,14 +17,16 @@ COPY dns_monitor.py /app/
 COPY manage.py /app/
 
 # Copy config file if it exists (optional)
-COPY config/dns_config.json /app/config/dns_config.json
+COPY config/dns_config.example.json /app/config/dns_config.example.json
 
 # Set timezone (optional)
 ENV TZ=Europe/Rome
 
-# Create non-root user for security
-RUN addgroup -g 1000 dnsmonitor && \
-    adduser -D -s /bin/sh -u 1000 -G dnsmonitor dnsmonitor
+# Create docker group and non-root user for security
+RUN addgroup -g 999 docker && \
+    addgroup -g 1000 dnsmonitor && \
+    adduser -D -s /bin/sh -u 1000 -G dnsmonitor dnsmonitor && \
+    adduser dnsmonitor docker
 
 # Change ownership of app directory and ensure logs directory is writable
 RUN chown -R dnsmonitor:dnsmonitor /app && \
