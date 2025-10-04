@@ -22,10 +22,10 @@ COPY config/dns_config.json /app/config/dns_config.json
 # Set timezone (optional)
 ENV TZ=Europe/Rome
 
-# Create docker group and non-root user for security
-RUN addgroup -g 999 docker && \
-    addgroup -g 1000 dnsmonitor && \
+# Create user and handle docker group
+RUN addgroup -g 1000 dnsmonitor && \
     adduser -D -s /bin/sh -u 1000 -G dnsmonitor dnsmonitor && \
+    (getent group docker || addgroup docker) && \
     adduser dnsmonitor docker
 
 # Change ownership of app directory and ensure logs directory is writable
