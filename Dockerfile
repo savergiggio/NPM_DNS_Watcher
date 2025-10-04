@@ -3,11 +3,12 @@ FROM python:3.11-alpine
 # Set working directory
 WORKDIR /app
 
-# Install required packages including Docker CLI
+# Install required packages including Docker CLI and Python dependencies
 RUN apk add --no-cache \
     tzdata \
     docker-cli \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/cache/apk/* \
+    && pip install --no-cache-dir watchdog
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /app/logs /app/config
