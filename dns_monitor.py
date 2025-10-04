@@ -275,6 +275,53 @@ class DNSMonitor:
             logger.error(f"Unexpected error restarting nginx container: {e}")
             return False
 
+    def verify_config_sync(self):
+        """Verify that all config files have IPs that match current DNS resolution"""
+        logger.info("🔍 Verifying IP synchronization between DNS and config files...")
+        
+        # Get current DNS resolutions
+        current_dns_ips = {}
+        for domain_config in self.dns_config.get('domains', []):
+            hostname = domain_config['hostname']
+            current_ip = self.resolve_dns(hostname)
+            if current_ip:
+                current_dns_ips[hostname] = current_ip
+                logger.info(f"📍 DNS resolution for {hostname}: {current_ip}")
+        
+        # Check all nginx config files
+        config_files = self.find_nginx_configs()
+        mismatched_files = []
+        
+        for config_file in config_files:
+            config_ips = self.extract_ips_from_config(config_file)
+            logger.debug(f"📄 Config file {config_file.name} contains IPs: {config_ips}")
+            
+            # Check if any config IP doesn't match current DNS
+            for hostname, dns_ip in current_dns_ips.items():
+                # Find old IPs that should be updated
+                for config_ip in config_ips:
+                    if config_ip != dns_ip and config_ip in self.current_ips.values():
+                        logger.warning(f"⚠️  MISMATCH in {config_file.name}: found {config_ip}, DNS resolves to {dns_ip}")
+                        mismatched_files.append((config_file, config_ip, dns_ip, hostname))
+        
+        # Fix any mismatches found
+        if mismatched_files:
+            logger.info(f"🔧 Fixing {len(mismatched_files)} IP mismatches...")
+            nginx_restart_needed = False
+            
+            for config_file, old_ip, new_ip, hostname in mismatched_files:
+                logger.info(f"🔄 Updating {config_file.name}: {old_ip} -> {new_ip} for {hostname}")
+                if self.update_ip_in_config(config_file, old_ip, new_ip):
+                    nginx_restart_needed = True
+            
+            if nginx_restart_needed and self.dns_config.get('restart_nginx', True):
+                logger.info("🔄 Restarting nginx to apply synchronized configurations...")
+                self.restart_nginx_container()
+        else:
+            logger.info("✅ All configuration files are synchronized with DNS resolution")
+        
+        return len(mismatched_files) == 0
+
     def check_and_update_ips(self):
         """Main method to check DNS and update IPs if changed"""
         logger.info("Starting DNS check cycle")
@@ -294,7 +341,7 @@ class DNSMonitor:
         for hostname, new_ip in new_ips.items():
             old_ip = self.current_ips.get(hostname)
             if old_ip and old_ip != new_ip:
-                logger.info(f"IP change detected for {hostname}: {old_ip} -> {new_ip}")
+                logger.info(f"🔄 IP change detected for {hostname}: {old_ip} -> {new_ip}")
                 changes_detected = True
                 
                 # Update all nginx config files
@@ -306,29 +353,34 @@ class DNSMonitor:
                         updated_files += 1
                         nginx_restart_needed = True
                 
-                logger.info(f"Updated {updated_files} configuration files for {hostname}")
+                logger.info(f"✅ Updated {updated_files} configuration files for {hostname}")
             elif not old_ip:
-                logger.info(f"Initial IP for {hostname}: {new_ip}")
+                logger.info(f"📍 Initial IP for {hostname}: {new_ip}")
 
         # Update current IPs
         self.current_ips.update(new_ips)
         
+        # Always verify synchronization after updates
+        if changes_detected:
+            logger.info("🔍 Performing post-update synchronization check...")
+            self.verify_config_sync()
+        
         # Restart nginx container if configurations were updated
         if nginx_restart_needed and self.dns_config.get('restart_nginx', True):
-            logger.info("Configuration files updated, restarting nginx container...")
+            logger.info("🔄 Configuration files updated, restarting nginx container...")
             restart_success = self.restart_nginx_container()
             if restart_success:
-                logger.info("Nginx container restarted successfully - new configurations applied")
+                logger.info("✅ Nginx container restarted successfully - new configurations applied")
             else:
-                logger.warning("Failed to restart nginx container - manual restart may be required")
+                logger.warning("⚠️  Failed to restart nginx container - manual restart may be required")
         elif changes_detected and not nginx_restart_needed:
-            logger.info("IP changes detected but no configuration files were updated")
+            logger.info("📝 IP changes detected but no configuration files were updated")
         elif not changes_detected and self.current_ips:
-            logger.info("No IP changes detected")
+            logger.info("✅ No IP changes detected - all systems synchronized")
 
     def run(self):
         """Main run loop"""
-        logger.info("DNS Monitor Service started")
+        logger.info("🚀 DNS Monitor Service started")
         
         # Initial IP resolution
         for domain_config in self.dns_config.get('domains', []):
@@ -336,20 +388,25 @@ class DNSMonitor:
             ip = self.resolve_dns(hostname)
             if ip:
                 self.current_ips[hostname] = ip
-                logger.info(f"Initial IP for {hostname}: {ip}")
+                logger.info(f"📍 Initial IP for {hostname}: {ip}")
+
+        # Perform initial synchronization check
+        logger.info("🔍 Performing initial synchronization check...")
+        self.verify_config_sync()
 
         check_interval = self.dns_config.get('check_interval', 300)
-        logger.info(f"Monitoring {len(self.current_ips)} domains, check interval: {check_interval}s")
+        logger.info(f"👀 Monitoring {len(self.current_ips)} domains, check interval: {check_interval}s")
+        logger.info("✅ DNS Monitor is now actively ensuring IP synchronization")
 
         while True:
             try:
                 self.check_and_update_ips()
                 time.sleep(check_interval)
             except KeyboardInterrupt:
-                logger.info("DNS Monitor Service stopped by user")
+                logger.info("🛑 DNS Monitor Service stopped by user")
                 break
             except Exception as e:
-                logger.error(f"Unexpected error: {e}")
+                logger.error(f"❌ Unexpected error: {e}")
                 time.sleep(60)  # Wait 1 minute before retrying
 
 if __name__ == "__main__":
