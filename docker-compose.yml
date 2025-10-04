@@ -16,24 +16,25 @@ services:
   dns-monitor:
     # Build directly from GitHub
     build:
-      context: https://github.com/your-username/npm-dns-monitor.git
+      context: https://github.com/savergiggio/NPM_DNS_Watcher.git
       dockerfile: Dockerfile
     container_name: dns-monitor
     restart: unless-stopped
+    # Map container user to host user for proper permissions
+    user: "0:0"
     environment:
       - TZ=Europe/Rome
       # MODIFY THESE VALUES:
-      - DNS_DOMAINS=yourdomain.duckdns.org
-      - DNS_CHECK_INTERVAL=300
+      - DNS_DOMAINS=yourdomain.com
+      - DNS_CHECK_INTERVAL=60
       - DNS_NGINX_CONTAINER=nginx-proxy
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       # Share nginx data directory
       - ./data:/data:rw
       # Mount logs directory
       - ./dns_logs:/app/logs:rw
       # Mount Docker socket (Linux/Mac)
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # For Windows, use this instead:
-      # - //./pipe/docker_engine://./pipe/docker_engine
     depends_on:
       - nginx-proxy
