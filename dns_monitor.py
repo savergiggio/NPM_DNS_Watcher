@@ -15,15 +15,29 @@ from pathlib import Path
 from typing import Dict, List, Set
 from datetime import datetime
 
-# Configure logging
+# Configure logging with error handling
 log_level = os.getenv('DNS_LOG_LEVEL', 'INFO').upper()
+
+# Create logs directory if it doesn't exist
+log_dir = Path('/app/logs')
+log_dir.mkdir(parents=True, exist_ok=True)
+
+# Setup logging handlers with fallback
+handlers = [logging.StreamHandler()]  # Always have console output
+
+try:
+    # Try to create file handler
+    file_handler = logging.FileHandler('/app/logs/dns_monitor.log')
+    handlers.append(file_handler)
+    print("✓ Log file created successfully: /app/logs/dns_monitor.log")
+except (PermissionError, OSError) as e:
+    print(f"⚠️  Warning: Cannot create log file (/app/logs/dns_monitor.log): {e}")
+    print("📝 Logging will continue to console only")
+
 logging.basicConfig(
     level=getattr(logging, log_level, logging.INFO),
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/app/logs/dns_monitor.log'),
-        logging.StreamHandler()
-    ]
+    handlers=handlers
 )
 logger = logging.getLogger(__name__)
 
