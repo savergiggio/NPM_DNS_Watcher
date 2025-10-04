@@ -4,15 +4,22 @@ Automatic DNS monitoring service that monitors dynamic domains and updates Nginx
 
 ## 🎯 What It Does
 
-This service solves the problem of dynamic IP addresses in Nginx Proxy Manager by:
+This service solves the problem of dynamic IP addresses in Nginx Proxy Manager by providing a workaround for access list limitations.
+
+### The Problem
+Nginx Proxy Manager access lists only accept **IP addresses and subnets** - you cannot directly insert DNS names or domains. This creates a challenge when using dynamic DNS services where your public IP changes frequently.
+
+### The Solution
+This service acts as a **DNS-to-IP bridge** that:
 
 - **Monitoring configured domains** - Continuously checks domains created in Nginx Proxy Manager
 - **DNS resolution** - Resolves each domain to get the current public IP address
 - **Configuration updates** - Automatically updates the domain configurations in Nginx Proxy Manager
-- **Access list updates** - Updates access lists with the newly resolved public IP addresses
+- **Access list updates** - Updates access lists with the newly resolved public IP addresses (converting DNS to IP)
 - **Automatic restart** - Restarts Nginx to apply the new configurations
 
-Perfect for dynamic DNS services like DuckDNS, No-IP, Dynu, etc., where your public IP changes frequently but you want your Nginx Proxy Manager to always point to the correct IP address.
+### Use Case
+Perfect for dynamic DNS services like DuckDNS, No-IP, Dynu, etc., where your public IP changes frequently but you need Nginx Proxy Manager access lists to always contain the correct IP addresses instead of unusable DNS names.
 
 ## 🚀 Quick Start
 
