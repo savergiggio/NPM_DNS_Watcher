@@ -6,7 +6,9 @@ Automatic DNS monitoring service that updates IP addresses in Nginx Proxy Manage
 
 ### Using Docker Compose (Recommended)
 
-1. **Simple Setup** - Add to your existing `docker-compose.yml`:
+2. **Step 0** - The first time add your public ip inside the Access List in NPM GUI  `allow` field:
+3. 
+2. **Simple Setup** - Add to your existing `docker-compose.yml`:
 
 ```yaml
 version: '3.8'
@@ -51,7 +53,7 @@ services:
       - nginx-proxy
 ```
 
-2. **Start the service**:
+3. **Start the service**:
 ```bash
 docker-compose up -d
 ```
