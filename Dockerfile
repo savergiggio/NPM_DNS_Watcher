@@ -8,12 +8,15 @@ RUN apk add --no-cache \
     tzdata \
     && rm -rf /var/cache/apk/*
 
-# Create necessary directories
+# Create necessary directories with proper permissions
 RUN mkdir -p /app/logs /app/config
 
 # Copy application files
 COPY dns_monitor.py /app/
-COPY config/dns_config.json /app/config/
+COPY manage.py /app/
+
+# Copy config file if it exists (optional)
+COPY config/dns_config.example.json /app/config/dns_config.example.json
 
 # Set timezone (optional)
 ENV TZ=Europe/Rome
@@ -22,8 +25,9 @@ ENV TZ=Europe/Rome
 RUN addgroup -g 1000 dnsmonitor && \
     adduser -D -s /bin/sh -u 1000 -G dnsmonitor dnsmonitor
 
-# Change ownership of app directory
-RUN chown -R dnsmonitor:dnsmonitor /app
+# Change ownership of app directory and ensure logs directory is writable
+RUN chown -R dnsmonitor:dnsmonitor /app && \
+    chmod 755 /app/logs
 
 # Switch to non-root user
 USER dnsmonitor
