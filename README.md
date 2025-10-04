@@ -43,10 +43,7 @@ docker-compose up -d
 | `DNS_DOMAINS` | ✅ | - | Domains to monitor (comma-separated) |
 | `DNS_CHECK_INTERVAL` | ❌ | `300` | Check interval in seconds |
 | `DNS_NGINX_CONTAINER` | ❌ | `nginx-proxy` | Nginx container name to restart |
-| `DNS_RESTART_NGINX` | ❌ | `true` | Auto-restart nginx on IP change |
-| `DNS_BACKUP_CONFIGS` | ❌ | `true` | Create config backups |
-| `DNS_LOG_LEVEL` | ❌ | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
-| `DNS_MAX_BACKUPS` | ❌ | `10` | Maximum backup files to keep |
+
 
 ### Examples
 
