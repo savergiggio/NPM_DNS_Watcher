@@ -17,7 +17,7 @@ COPY dns_monitor.py /app/
 COPY manage.py /app/
 
 # Copy config file if it exists (optional)
-COPY config/dns_config.example.json /app/config/dns_config.example.json
+COPY config/dns_config.json /app/config/dns_config.json
 
 # Set timezone (optional)
 ENV TZ=Europe/Rome
