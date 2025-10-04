@@ -74,11 +74,6 @@ docker-compose up -d
 - DNS_DOMAINS=mydomain.duckdns.org
 ```
 
-**Multiple domains:**
-```yaml
-- DNS_DOMAINS=home.duckdns.org,office.duckdns.org,server.example.com
-```
-
 **Custom check interval (every 1 minute):**
 ```yaml
 - DNS_CHECK_INTERVAL=60
