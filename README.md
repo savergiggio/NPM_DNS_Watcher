@@ -1,6 +1,18 @@
 # 🔄 DNS Monitor for Nginx Proxy Manager
 
-Automatic DNS monitoring service that updates IP addresses in Nginx Proxy Manager configurations when they change.
+Automatic DNS monitoring service that monitors dynamic domains and updates Nginx Proxy Manager configurations with current IP addresses. The service specifically updates domain configurations and access lists with the public IP resolved through DNS queries.
+
+## 🎯 What It Does
+
+This service solves the problem of dynamic IP addresses in Nginx Proxy Manager by:
+
+- **Monitoring configured domains** - Continuously checks domains created in Nginx Proxy Manager
+- **DNS resolution** - Resolves each domain to get the current public IP address
+- **Configuration updates** - Automatically updates the domain configurations in Nginx Proxy Manager
+- **Access list updates** - Updates access lists with the newly resolved public IP addresses
+- **Automatic restart** - Restarts Nginx to apply the new configurations
+
+Perfect for dynamic DNS services like DuckDNS, No-IP, Dynu, etc., where your public IP changes frequently but you want your Nginx Proxy Manager to always point to the correct IP address.
 
 ## 🚀 Quick Start
 
