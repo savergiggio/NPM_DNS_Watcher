@@ -9,21 +9,43 @@ Automatic DNS monitoring service that updates IP addresses in Nginx Proxy Manage
 1. **Simple Setup** - Add to your existing `docker-compose.yml`:
 
 ```yaml
+version: '3.8'
+
 services:
+  nginx-proxy:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx-proxy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '81:81'
+      - '443:443'
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+
   dns-monitor:
+    # Build directly from GitHub
     build:
-      context: https://github.com/your-username/npm-dns-monitor.git
+      context: https://github.com/savergiggio/NPM_DNS_Watcher.git
       dockerfile: Dockerfile
     container_name: dns-monitor
     restart: unless-stopped
+    # Map container user to host user for proper permissions
+    user: "0:0"
     environment:
       - TZ=Europe/Rome
-      - DNS_DOMAINS=yourdomain.duckdns.org
-      - DNS_CHECK_INTERVAL=300
+      # MODIFY THESE VALUES:
+      - DNS_DOMAINS=yourdomain.com
+      - DNS_CHECK_INTERVAL=60
       - DNS_NGINX_CONTAINER=nginx-proxy
     volumes:
-      - /path/to/nginx/data:/data:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Share nginx data directory
+      - ./data:/data:rw
+      # Mount logs directory
       - ./dns_logs:/app/logs:rw
+      # Mount Docker socket (Linux/Mac)
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - nginx-proxy
