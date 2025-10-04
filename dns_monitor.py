@@ -11,9 +11,12 @@ import json
 import socket
 import logging
 import subprocess
+import threading
 from pathlib import Path
 from typing import Dict, List, Set
 from datetime import datetime
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # Configure logging with error handling
 log_level = os.getenv('DNS_LOG_LEVEL', 'INFO').upper()
@@ -41,6 +44,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class ConfigFileHandler(FileSystemEventHandler):
+    """Handler for configuration file changes"""
+    
+    def __init__(self, dns_monitor):
+        self.dns_monitor = dns_monitor
+        self.last_reload = 0
+        self.reload_delay = 2  # Wait 2 seconds before reloading to avoid multiple rapid changes
+        
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+            
+        # Check if it's our config file or any .conf file in nginx directory
+        file_path = Path(event.src_path)
+        current_time = time.time()
+        
+        # Avoid rapid successive reloads
+        if current_time - self.last_reload < self.reload_delay:
+            return
+            
+        if (file_path.name == 'dns_config.json' or 
+            file_path.suffix == '.conf' and 
+            str(file_path).startswith(self.dns_monitor.nginx_config_path)):
+            
+            logger.info(f"📁 Configuration change detected: {file_path}")
+            self.last_reload = current_time
+            
+            # Schedule reload in a separate thread to avoid blocking the file watcher
+            threading.Thread(target=self._delayed_reload, daemon=True).start()
+    
+    def _delayed_reload(self):
+        """Reload configuration after a short delay"""
+        time.sleep(self.reload_delay)
+        try:
+            logger.info("🔄 Reloading configuration due to file changes...")
+            self.dns_monitor.reload_configuration()
+        except Exception as e:
+            logger.error(f"❌ Error reloading configuration: {e}")
+
 class DNSMonitor:
     def __init__(self, config_path: str = '/app/config/dns_config.json'):
         self.config_path = config_path
@@ -48,6 +90,11 @@ class DNSMonitor:
         self.nginx_config_path = os.getenv('DNS_NGINX_CONFIG_PATH', '/data/nginx/proxy_host')
         self.dns_config = self.load_dns_config()
         self.current_ips = {}
+        self.config_lock = threading.Lock()  # Thread safety for config reloads
+        
+        # Initialize file watcher
+        self.observer = None
+        self.setup_file_watcher()
         
         # Log the nginx config path being used
         logger.info(f"🔍 Looking for nginx config files in: {self.nginx_config_path}")
@@ -122,6 +169,69 @@ class DNSMonitor:
         except Exception as e:
             logger.error(f"Error loading config: {e}")
             return {"domains": [], "check_interval": 300, "backup_configs": True, "restart_nginx": True, "nginx_container_name": "nginx-proxy"}
+
+    def setup_file_watcher(self):
+        """Setup file watcher for configuration changes"""
+        try:
+            self.observer = Observer()
+            event_handler = ConfigFileHandler(self)
+            
+            # Watch the config directory
+            config_dir = os.path.dirname(self.config_path)
+            if os.path.exists(config_dir):
+                self.observer.schedule(event_handler, config_dir, recursive=False)
+                logger.info(f"👁️  Watching config directory: {config_dir}")
+            
+            # Watch the nginx config directory
+            if os.path.exists(self.nginx_config_path):
+                self.observer.schedule(event_handler, self.nginx_config_path, recursive=True)
+                logger.info(f"👁️  Watching nginx config directory: {self.nginx_config_path}")
+            
+            self.observer.start()
+            logger.info("✅ File watcher started successfully")
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Could not start file watcher: {e}")
+            logger.info("📝 Configuration will only be loaded at startup")
+
+    def reload_configuration(self):
+        """Reload DNS configuration and update monitoring"""
+        with self.config_lock:
+            try:
+                old_domains = set(d['hostname'] for d in self.dns_config.get('domains', []))
+                
+                # Reload configuration
+                self.dns_config = self.load_dns_config()
+                new_domains = set(d['hostname'] for d in self.dns_config.get('domains', []))
+                
+                # Check for new domains
+                added_domains = new_domains - old_domains
+                removed_domains = old_domains - new_domains
+                
+                if added_domains:
+                    logger.info(f"🆕 New domains detected: {', '.join(added_domains)}")
+                    # Resolve IPs for new domains
+                    for domain in added_domains:
+                        ip = self.resolve_dns(domain)
+                        if ip:
+                            self.current_ips[domain] = ip
+                            logger.info(f"📍 Initial IP for new domain {domain}: {ip}")
+                
+                if removed_domains:
+                    logger.info(f"🗑️  Domains removed: {', '.join(removed_domains)}")
+                    # Remove IPs for removed domains
+                    for domain in removed_domains:
+                        self.current_ips.pop(domain, None)
+                
+                if added_domains or removed_domains:
+                    logger.info(f"📊 Now monitoring {len(self.current_ips)} domains")
+                    # Perform synchronization check for all domains
+                    self.verify_config_sync()
+                else:
+                    logger.info("🔄 Configuration reloaded (no domain changes)")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error during configuration reload: {e}")
 
     def resolve_dns(self, hostname: str) -> str:
         """Resolve hostname to IP address"""
@@ -475,16 +585,24 @@ class DNSMonitor:
         logger.info(f"👀 Monitoring {len(self.current_ips)} domains, check interval: {check_interval}s")
         logger.info("✅ DNS Monitor is now actively ensuring IP synchronization")
 
-        while True:
-            try:
-                self.check_and_update_ips()
-                time.sleep(check_interval)
-            except KeyboardInterrupt:
-                logger.info("🛑 DNS Monitor Service stopped by user")
-                break
-            except Exception as e:
-                logger.error(f"❌ Unexpected error: {e}")
-                time.sleep(60)  # Wait 1 minute before retrying
+        try:
+            while True:
+                try:
+                    self.check_and_update_ips()
+                    time.sleep(check_interval)
+                except KeyboardInterrupt:
+                    logger.info("🛑 DNS Monitor Service stopped by user")
+                    break
+                except Exception as e:
+                    logger.error(f"❌ Unexpected error: {e}")
+                    time.sleep(60)  # Wait 1 minute before retrying
+        finally:
+            # Cleanup file watcher
+            if self.observer and self.observer.is_alive():
+                logger.info("🧹 Stopping file watcher...")
+                self.observer.stop()
+                self.observer.join()
+                logger.info("✅ File watcher stopped")
 
 if __name__ == "__main__":
     monitor = DNSMonitor()
