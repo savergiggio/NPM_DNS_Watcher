@@ -44,9 +44,13 @@ logger = logging.getLogger(__name__)
 class DNSMonitor:
     def __init__(self, config_path: str = '/app/config/dns_config.json'):
         self.config_path = config_path
-        self.nginx_config_path = '/data/nginx/proxy_host'
+        # Allow nginx config path to be configured via environment variable
+        self.nginx_config_path = os.getenv('DNS_NGINX_CONFIG_PATH', '/data/nginx/proxy_host')
         self.dns_config = self.load_dns_config()
         self.current_ips = {}
+        
+        # Log the nginx config path being used
+        logger.info(f"🔍 Looking for nginx config files in: {self.nginx_config_path}")
         
     def load_dns_config(self) -> Dict:
         """Load DNS configuration from environment variables or JSON file"""
@@ -161,45 +165,86 @@ class DNSMonitor:
         """Update IP address in nginx configuration file"""
         try:
             content = config_file.read_text(encoding='utf-8')
+            original_content = content
             
-            # Pattern to match IP addresses in allow statements
-            # Matches both single IPs and CIDR notation, but only updates single IPs
+            # Pattern to match IP addresses (not in CIDR notation)
             pattern = rf'\b{re.escape(old_ip)}\b(?!/\d+)'
             
-            if re.search(pattern, content):
+            # Count occurrences before replacement
+            matches = re.findall(pattern, content)
+            if matches:
+                logger.info(f"🔍 Found {len(matches)} occurrences of {old_ip} in {config_file.name}")
+                
                 # Create backup before modifying
                 self.backup_config(config_file)
                 
                 # Replace the IP
                 updated_content = re.sub(pattern, new_ip, content)
                 
-                # Write updated content
-                config_file.write_text(updated_content, encoding='utf-8')
-                logger.info(f"Updated {config_file.name}: {old_ip} -> {new_ip}")
-                return True
+                # Verify the replacement worked
+                if updated_content != original_content:
+                    # Write updated content
+                    config_file.write_text(updated_content, encoding='utf-8')
+                    logger.info(f"✅ Updated {config_file.name}: {old_ip} -> {new_ip}")
+                    
+                    # Log a sample of the change for debugging
+                    lines_changed = []
+                    for i, (old_line, new_line) in enumerate(zip(original_content.split('\n'), updated_content.split('\n'))):
+                        if old_line != new_line:
+                            lines_changed.append(f"Line {i+1}: {old_line.strip()} -> {new_line.strip()}")
+                    
+                    if lines_changed:
+                        logger.debug(f"📝 Changes made: {lines_changed[:3]}")  # Show first 3 changes
+                    
+                    return True
+                else:
+                    logger.warning(f"⚠️  No changes made to {config_file.name} despite finding matches")
+                    return False
             else:
-                logger.debug(f"IP {old_ip} not found in {config_file.name}")
+                logger.debug(f"🔍 IP {old_ip} not found in {config_file.name}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error updating {config_file}: {e}")
+            logger.error(f"❌ Error updating {config_file}: {e}")
             return False
 
     def extract_ips_from_config(self, config_file: Path) -> Set[str]:
-        """Extract all IP addresses from allow statements in config file"""
+        """Extract all IP addresses from nginx config file"""
         try:
             content = config_file.read_text(encoding='utf-8')
+            logger.debug(f"📄 Analyzing config file: {config_file.name}")
             
-            # Pattern to find allow statements with IP addresses (not CIDR)
-            pattern = r'allow\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!/\d+)\s*;'
-            matches = re.findall(pattern, content)
+            # Multiple patterns to find IP addresses in different contexts
+            patterns = [
+                # Allow statements
+                r'allow\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?!/\d+)\s*;',
+                # Proxy_pass statements
+                r'proxy_pass\s+https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d+)?',
+                # Server statements
+                r'server\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d+)?',
+                # Upstream statements
+                r'upstream.*?{\s*server\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d+)?',
+                # General IP pattern (more broad)
+                r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b'
+            ]
             
-            # Filter out private IP ranges
+            all_ips = set()
+            for i, pattern in enumerate(patterns):
+                matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL)
+                if matches:
+                    logger.debug(f"🔍 Pattern {i+1} found IPs: {matches}")
+                    all_ips.update(matches)
+            
+            # Filter out private IP ranges and localhost
             public_ips = set()
-            for ip in matches:
+            for ip in all_ips:
                 if self.is_public_ip(ip):
                     public_ips.add(ip)
+                    logger.debug(f"✅ Public IP found: {ip}")
+                else:
+                    logger.debug(f"🚫 Private/Local IP ignored: {ip}")
             
+            logger.info(f"📊 Config {config_file.name}: found {len(public_ips)} public IPs: {public_ips}")
             return public_ips
             
         except Exception as e:
@@ -294,25 +339,67 @@ class DNSMonitor:
         
         for config_file in config_files:
             config_ips = self.extract_ips_from_config(config_file)
-            logger.debug(f"📄 Config file {config_file.name} contains IPs: {config_ips}")
+            logger.info(f"📄 Config file {config_file.name} contains IPs: {config_ips}")
             
-            # Check if any config IP doesn't match current DNS
-            for hostname, dns_ip in current_dns_ips.items():
-                # Find old IPs that should be updated
-                for config_ip in config_ips:
-                    if config_ip != dns_ip and config_ip in self.current_ips.values():
-                        logger.warning(f"⚠️  MISMATCH in {config_file.name}: found {config_ip}, DNS resolves to {dns_ip}")
-                        mismatched_files.append((config_file, config_ip, dns_ip, hostname))
+            # Check each IP in the config file against current DNS resolutions
+            for config_ip in config_ips:
+                # Check if this IP should be updated to match any of our monitored domains
+                for hostname, dns_ip in current_dns_ips.items():
+                    # If the config has a different IP than current DNS, it's a mismatch
+                    if config_ip != dns_ip:
+                        # Check if this might be an old IP for this domain
+                        # (either it's in our current_ips tracking or it's a public IP that doesn't match)
+                        if (config_ip in self.current_ips.values() or 
+                            (self.is_public_ip(config_ip) and config_ip not in current_dns_ips.values())):
+                            logger.warning(f"⚠️  MISMATCH in {config_file.name}: found {config_ip}, but {hostname} resolves to {dns_ip}")
+                            mismatched_files.append((config_file, config_ip, dns_ip, hostname))
+                            break  # Don't check this config_ip against other domains
+        
+        # Remove duplicates (same file, same old IP)
+        unique_mismatches = []
+        seen = set()
+        for item in mismatched_files:
+            key = (item[0], item[1])  # (config_file, old_ip)
+            if key not in seen:
+                seen.add(key)
+                unique_mismatches.append(item)
         
         # Fix any mismatches found
-        if mismatched_files:
-            logger.info(f"🔧 Fixing {len(mismatched_files)} IP mismatches...")
+        if unique_mismatches:
+            logger.info(f"🔧 Fixing {len(unique_mismatches)} IP mismatches...")
+            
+            # Temporarily enable debug logging for troubleshooting
+            original_level = logger.level
+            if logger.level > logging.DEBUG:
+                logger.setLevel(logging.DEBUG)
+                logger.debug("🔍 Enabled debug logging to troubleshoot IP update issues")
+            
             nginx_restart_needed = False
             
-            for config_file, old_ip, new_ip, hostname in mismatched_files:
+            for config_file, old_ip, new_ip, hostname in unique_mismatches:
                 logger.info(f"🔄 Updating {config_file.name}: {old_ip} -> {new_ip} for {hostname}")
+                
+                # Show file content before update for debugging
+                try:
+                    content = config_file.read_text(encoding='utf-8')
+                    lines_with_ip = [f"Line {i+1}: {line.strip()}" for i, line in enumerate(content.split('\n')) 
+                                   if old_ip in line and line.strip()]
+                    if lines_with_ip:
+                        logger.debug(f"📝 Lines containing {old_ip}: {lines_with_ip[:3]}")
+                except Exception as e:
+                    logger.debug(f"Could not read file for debugging: {e}")
+                
                 if self.update_ip_in_config(config_file, old_ip, new_ip):
                     nginx_restart_needed = True
+                    # Update our tracking
+                    self.current_ips[hostname] = new_ip
+                else:
+                    logger.error(f"❌ Failed to update IP in {config_file.name}")
+            
+            # Restore original logging level
+            if original_level != logger.level:
+                logger.setLevel(original_level)
+                logger.debug("🔍 Restored original logging level")
             
             if nginx_restart_needed and self.dns_config.get('restart_nginx', True):
                 logger.info("🔄 Restarting nginx to apply synchronized configurations...")
@@ -320,7 +407,7 @@ class DNSMonitor:
         else:
             logger.info("✅ All configuration files are synchronized with DNS resolution")
         
-        return len(mismatched_files) == 0
+        return len(unique_mismatches) == 0
 
     def check_and_update_ips(self):
         """Main method to check DNS and update IPs if changed"""
