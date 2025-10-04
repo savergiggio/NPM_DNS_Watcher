@@ -29,7 +29,7 @@ services:
   dns-monitor:
     # Build directly from GitHub
     build:
-      context: https://github.com/savergiggio/NPM_DNS_Watcher.git
+      context: https://github.com/savergiggio/NginxProxyManager_DNS_Watcher_AccessList.git
       dockerfile: Dockerfile
     container_name: dns-monitor
     restart: unless-stopped
