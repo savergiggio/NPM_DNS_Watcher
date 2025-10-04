@@ -144,23 +144,6 @@ class DNSMonitor:
         logger.info(f"Found {len(conf_files)} nginx config files")
         return conf_files
 
-    def backup_config(self, config_file: Path):
-        """Create backup of configuration file"""
-        if not self.dns_config.get('backup_configs', True):
-            return
-            
-        backup_dir = config_file.parent / 'backups'
-        backup_dir.mkdir(exist_ok=True)
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_file = backup_dir / f"{config_file.stem}_{timestamp}.conf.bak"
-        
-        try:
-            backup_file.write_text(config_file.read_text(), encoding='utf-8')
-            logger.debug(f"Created backup: {backup_file}")
-        except Exception as e:
-            logger.error(f"Failed to create backup for {config_file}: {e}")
-
     def update_ip_in_config(self, config_file: Path, old_ip: str, new_ip: str) -> bool:
         """Update IP address in nginx configuration file"""
         try:
@@ -175,10 +158,7 @@ class DNSMonitor:
             if matches:
                 logger.info(f"🔍 Found {len(matches)} occurrences of {old_ip} in {config_file.name}")
                 
-                # Create backup before modifying
-                self.backup_config(config_file)
-                
-                # Replace the IP
+                # Replace the IP directly (no backup)
                 updated_content = re.sub(pattern, new_ip, content)
                 
                 # Verify the replacement worked
