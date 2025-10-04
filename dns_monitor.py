@@ -202,11 +202,28 @@ class DNSMonitor:
                 
                 # Reload configuration
                 self.dns_config = self.load_dns_config()
-                new_domains = set(d['hostname'] for d in self.dns_config.get('domains', []))
+                config_domains = set(d['hostname'] for d in self.dns_config.get('domains', []))
+                
+                # Auto-discover domains from nginx config files
+                nginx_domains = self.extract_domains_from_nginx_configs()
+                
+                # Combine configured domains with auto-discovered domains
+                all_domains = config_domains.union(nginx_domains)
+                
+                # Update the configuration to include auto-discovered domains
+                if nginx_domains:
+                    existing_hostnames = config_domains
+                    for domain in nginx_domains:
+                        if domain not in existing_hostnames:
+                            self.dns_config.setdefault('domains', []).append({
+                                "hostname": domain,
+                                "description": f"Auto-discovered from nginx config: {domain}"
+                            })
+                            logger.info(f"🆕 Auto-discovered domain added to monitoring: {domain}")
                 
                 # Check for new domains
-                added_domains = new_domains - old_domains
-                removed_domains = old_domains - new_domains
+                added_domains = all_domains - old_domains
+                removed_domains = old_domains - all_domains
                 
                 if added_domains:
                     logger.info(f"🆕 New domains detected: {', '.join(added_domains)}")
@@ -232,6 +249,43 @@ class DNSMonitor:
                     
             except Exception as e:
                 logger.error(f"❌ Error during configuration reload: {e}")
+
+    def extract_domains_from_nginx_configs(self) -> Set[str]:
+        """Extract domain names from nginx configuration files"""
+        domains = set()
+        
+        try:
+            config_files = self.find_nginx_configs()
+            logger.debug(f"Scanning {len(config_files)} nginx config files for domains")
+            
+            for config_file in config_files:
+                try:
+                    with open(config_file, 'r') as f:
+                        content = f.read()
+                    
+                    # Extract server_name directives
+                    server_name_pattern = r'server_name\s+([^;]+);'
+                    matches = re.findall(server_name_pattern, content, re.MULTILINE)
+                    
+                    for match in matches:
+                        # Split multiple domains and clean them
+                        domain_names = match.strip().split()
+                        for domain in domain_names:
+                            domain = domain.strip()
+                            # Skip default server names and wildcards
+                            if domain and domain != '_' and not domain.startswith('*'):
+                                domains.add(domain)
+                                logger.debug(f"Found domain in {config_file.name}: {domain}")
+                
+                except Exception as e:
+                    logger.warning(f"Error reading config file {config_file}: {e}")
+            
+            logger.info(f"🔍 Discovered {len(domains)} domains from nginx configs: {', '.join(sorted(domains))}")
+            return domains
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting domains from nginx configs: {e}")
+            return set()
 
     def resolve_dns(self, hostname: str) -> str:
         """Resolve hostname to IP address"""
@@ -568,6 +622,18 @@ class DNSMonitor:
     def run(self):
         """Main run loop"""
         logger.info("🚀 DNS Monitor Service started")
+        
+        # Auto-discover domains from nginx config files at startup
+        nginx_domains = self.extract_domains_from_nginx_configs()
+        if nginx_domains:
+            existing_hostnames = set(d['hostname'] for d in self.dns_config.get('domains', []))
+            for domain in nginx_domains:
+                if domain not in existing_hostnames:
+                    self.dns_config.setdefault('domains', []).append({
+                        "hostname": domain,
+                        "description": f"Auto-discovered from nginx config: {domain}"
+                    })
+                    logger.info(f"🆕 Auto-discovered domain added to monitoring: {domain}")
         
         # Initial IP resolution
         for domain_config in self.dns_config.get('domains', []):
