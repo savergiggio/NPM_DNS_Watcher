@@ -184,6 +184,13 @@ class DNSMonitor:
                 logger.debug(f"🔍 IP {old_ip} not found in {config_file.name}")
                 return False
                 
+        except PermissionError as e:
+            logger.error(f"❌ Permission denied writing to {config_file}: {e}")
+            logger.error("🔧 SOLUTION: Ensure the dns-monitor container has write permissions to nginx config files")
+            logger.error("   Option 1: Add 'user: \"0:0\"' to dns-monitor service in docker-compose.yml")
+            logger.error("   Option 2: Set proper file ownership: chown -R 1000:1000 /path/to/nginx/data")
+            logger.error("   Option 3: Add volume mount with proper permissions")
+            return False
         except Exception as e:
             logger.error(f"❌ Error updating {config_file}: {e}")
             return False
